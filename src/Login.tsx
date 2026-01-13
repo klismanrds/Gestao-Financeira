@@ -1,10 +1,5 @@
 import React, { useState } from 'react';
-import {
-    createUserWithEmailAndPassword,
-    signInWithEmailAndPassword,
-    updateProfile
-} from 'firebase/auth';
-import { auth } from './firebase';
+import { supabase } from './supabaseClient';
 import { Wallet, ArrowRight, Loader2, Mail, Lock, User } from 'lucide-react';
 
 export default function Login() {
@@ -23,25 +18,30 @@ export default function Login() {
         try {
             if (isRegistering) {
                 // Register
-                const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-                // Add Display Name
-                if (name) {
-                    await updateProfile(userCredential.user, {
-                        displayName: name
-                    });
-                }
+                const { error: signUpError } = await supabase.auth.signUp({
+                    email,
+                    password,
+                    options: {
+                        data: {
+                            full_name: name,
+                        }
+                    }
+                });
+                if (signUpError) throw signUpError;
             } else {
                 // Login
-                await signInWithEmailAndPassword(auth, email, password);
+                const { error: signInError } = await supabase.auth.signInWithPassword({
+                    email,
+                    password,
+                });
+                if (signInError) throw signInError;
             }
-            // Success is handled by onAuthStateChanged in App.tsx
+            // Success is handled by onAuthStateChange in App.tsx
         } catch (err: any) {
             console.error("Auth error:", err);
-            let msg = "Ocorreu um erro. Tente novamente.";
-            if (err.code === 'auth/invalid-credential') msg = "E-mail ou senha incorretos.";
-            if (err.code === 'auth/email-already-in-use') msg = "Este e-mail já está cadastrado.";
-            if (err.code === 'auth/weak-password') msg = "A senha deve ter pelo menos 6 caracteres.";
-            if (err.code === 'auth/invalid-email') msg = "E-mail inválido.";
+            let msg = err.message || "Ocorreu um erro. Tente novamente.";
+            // Translate common Supabase errors if necessary
+            if (msg.includes("Invalid login credentials")) msg = "E-mail ou senha incorretos.";
             setError(msg);
         } finally {
             setLoading(false);
