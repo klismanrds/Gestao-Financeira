@@ -22,26 +22,10 @@ import {
   CheckCircle,
   AlertTriangle
 } from 'lucide-react';
-import {
-  onAuthStateChanged,
-  signOut,
-  type User
-} from 'firebase/auth';
-import {
-  collection,
-  addDoc,
-  deleteDoc,
-  doc,
-  onSnapshot,
-  Timestamp,
-  type QuerySnapshot,
-  type DocumentData,
-  setDoc
-} from 'firebase/firestore';
-import { auth, db } from './firebase';
+import { supabase } from './supabaseClient';
+import { User } from '@supabase/supabase-js';
 import Login from './Login';
 
-const appId = import.meta.env.VITE_APP_ID || 'default-app-id';
 const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
 
 // --- Gemini API ---
@@ -78,17 +62,16 @@ type TransactionType = 'income' | 'expense';
 
 interface Transaction {
   id: string;
+  user_id: string;
   description: string;
   amount: number;
   type: TransactionType;
   category: string;
-  date: any; // Firestore Timestamp
-  createdAt: number;
-  installment?: {
-    current: number;
-    total: number;
-  };
-  isAutoSalary?: boolean;
+  date: string; // ISO String
+  created_at: string;
+  installment_current?: number;
+  installment_total?: number;
+  is_auto_salary?: boolean;
 }
 
 interface SalaryConfig {
@@ -119,7 +102,6 @@ export default function FinanceApp() {
   const [user, setUser] = useState<User | null>(null);
   const [allTransactions, setAllTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
-  const [authError, setAuthError] = useState<string | null>(null);
 
   // Date Filter
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -156,87 +138,93 @@ export default function FinanceApp() {
 
   // 1. Auth check
   useEffect(() => {
-    if (!auth) return;
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
       setLoading(false);
-      setAuthError(null);
     });
-    return () => unsubscribe();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  // 2. Load Firestore Data
+  // 2. Load Data (Transactions & Settings)
   useEffect(() => {
-    if (!user || !db) return;
+    if (!user) return;
 
-    // Transactions
-    const collectionRef = collection(db, 'artifacts', appId, 'users', user.uid, 'transactions');
-    const unsubscribeTransactions = onSnapshot(collectionRef,
-      (snapshot: QuerySnapshot<DocumentData>) => {
-        const docs = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        })) as Transaction[];
+    const fetchData = async () => {
+      // Transactions
+      const { data: transactionsData, error: tError } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('date', { ascending: false });
 
-        const sortedDocs = docs.sort((a, b) => {
-          const dateA = a.date?.seconds || 0;
-          const dateB = b.date?.seconds || 0;
-          return dateB - dateA;
+      if (tError) {
+        console.error("Error fetching transactions:", tError);
+      } else {
+        setAllTransactions(transactionsData || []);
+      }
+
+      // Settings
+      const { data: settingsData, error: sError } = await supabase
+        .from('settings')
+        .select('*')
+        .eq('user_id', user.id)
+        .single();
+
+      if (settingsData) {
+        setSalaryConfig({
+          enabled: settingsData.salary_enabled,
+          amount: settingsData.salary_amount,
+          day: settingsData.salary_day
         });
-
-        setAllTransactions(sortedDocs);
-      },
-      (error) => {
-        console.error("Error reading transactions:", error);
       }
-    );
-
-    // Settings
-    const settingsRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'salary');
-    const unsubscribeSettings = onSnapshot(settingsRef, (docSnap) => {
-      if (docSnap.exists()) {
-        setSalaryConfig(docSnap.data() as SalaryConfig);
-      }
-    });
-
-    return () => {
-      unsubscribeTransactions();
-      unsubscribeSettings();
     };
+
+    fetchData();
   }, [user]);
 
-  // 3. Auto Salary Logic
+  // 3. Auto Salary Logic (Client-side generation for simplicity, though scheduled function is better)
   useEffect(() => {
-    if (!user || !salaryConfig.enabled || !salaryConfig.amount || loading || !db) return;
+    if (!user || !salaryConfig.enabled || !salaryConfig.amount || loading) return;
 
     const checkAndGenerateSalary = async () => {
       const now = new Date();
       const currentDay = now.getDate();
 
-      const targetDate = new Date(now.getFullYear(), now.getMonth(), salaryConfig.day);
-
       if (currentDay >= salaryConfig.day) {
-
+        // Check if salary for this month/year already exists
         const alreadyExists = allTransactions.some(t => {
-          if (!t.isAutoSalary) return false;
-          const tDate = t.date?.toDate();
-          return tDate &&
-            tDate.getMonth() === now.getMonth() &&
+          if (!t.is_auto_salary) return false;
+          const tDate = new Date(t.date);
+          // Use UTC or local handling consistently. Assuming local for simplicity.
+          return tDate.getMonth() === now.getMonth() &&
             tDate.getFullYear() === now.getFullYear();
         });
 
-        if (!alreadyExists && db) {
+        if (!alreadyExists) {
           console.log("Generating auto salary...");
           try {
-            await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'transactions'), {
+            const targetDate = new Date(now.getFullYear(), now.getMonth(), salaryConfig.day);
+
+            const { data, error } = await supabase.from('transactions').insert({
+              user_id: user.id,
               description: 'Salário Mensal (Automático)',
               amount: salaryConfig.amount,
               type: 'income',
               category: 'Salário',
-              date: Timestamp.fromDate(targetDate),
-              createdAt: Date.now(),
-              isAutoSalary: true
-            });
+              date: targetDate.toISOString(),
+              is_auto_salary: true
+            }).select();
+
+            if (data) {
+              setAllTransactions(prev => [data[0], ...prev]);
+            }
           } catch (err) {
             console.error("Error generating salary:", err);
           }
@@ -251,15 +239,24 @@ export default function FinanceApp() {
 
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !db) return;
+    if (!user) return;
     setIsSavingSettings(true);
     try {
-      await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'salary'), salaryConfig);
+      // Upsert settings
+      const { error } = await supabase.from('settings').upsert({
+        user_id: user.id,
+        salary_enabled: salaryConfig.enabled,
+        salary_amount: salaryConfig.amount,
+        salary_day: salaryConfig.day
+      });
+
+      if (error) throw error;
+
       setShowSettings(false);
-      alert("Configurações salvas com sucesso!"); // Optional confirmation
+      alert("Configurações salvas com sucesso!");
     } catch (err: any) {
       console.error("Error saving settings:", err);
-      alert("Erro ao salvar configurações: " + (err.message || "Erro desconhecido. Verifique suas regras do Firestore."));
+      alert("Erro ao salvar configurações.");
     } finally {
       setIsSavingSettings(false);
     }
@@ -269,11 +266,7 @@ export default function FinanceApp() {
     e.preventDefault();
 
     if (!user) {
-      alert("Erro: Usuário não autenticado. Verifique se a 'Autenticação Anônima' está ativada no console do Firebase e recarregue a página.");
-      return;
-    }
-    if (!db) {
-      alert("Erro: Conexão com banco de dados falhou.");
+      alert("Erro: Usuário não autenticado.");
       return;
     }
     if (!description || !amount) return;
@@ -283,38 +276,33 @@ export default function FinanceApp() {
       const val = parseFloat(amount.replace(',', '.'));
       if (isNaN(val) || val <= 0) return;
 
-      const batch: Promise<any>[] = [];
-      const collectionRef = collection(db, 'artifacts', appId, 'users', user.uid, 'transactions');
-
       const numMonths = isRecurring ? parseInt(monthsToRepeat) : 1;
+      const newTransactions = [];
 
       for (let i = 0; i < numMonths; i++) {
-        // Original code used new Date() which is 'today'. 
-        // If user is adding to a specific month, maybe they want that month? 
-        // But usually transactions are 'today' unless specified. 
-        // Let's stick to original behavior: today + i months.
         const d = new Date();
         d.setMonth(d.getMonth() + i);
 
-        const docData: any = {
+        const newTx = {
+          user_id: user.id,
           description: isRecurring ? `${description} (${i + 1}/${numMonths})` : description,
           amount: val,
           type,
           category,
-          date: Timestamp.fromDate(d),
-          createdAt: Date.now()
+          date: d.toISOString(),
+          installment_current: isRecurring ? i + 1 : undefined,
+          installment_total: isRecurring ? numMonths : undefined
         };
-
-        if (isRecurring) {
-          docData.installment = {
-            current: i + 1,
-            total: numMonths
-          };
-        }
-        batch.push(addDoc(collectionRef, docData));
+        newTransactions.push(newTx);
       }
 
-      await Promise.all(batch);
+      const { data, error } = await supabase.from('transactions').insert(newTransactions).select();
+
+      if (error) throw error;
+
+      if (data) {
+        setAllTransactions(prev => [...data, ...prev].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+      }
 
       setDescription('');
       setAmount('');
@@ -332,12 +320,18 @@ export default function FinanceApp() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!user || !db) return;
+    if (!user) return;
     try {
-      await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'transactions', id));
+      const { error } = await supabase.from('transactions').delete().eq('id', id);
+      if (error) throw error;
+      setAllTransactions(prev => prev.filter(t => t.id !== id));
     } catch (err) {
       console.error("Error deleting:", err);
     }
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
   };
 
   // --- Filters ---
@@ -356,17 +350,17 @@ export default function FinanceApp() {
   const filteredTransactions = useMemo(() => {
     return allTransactions.filter(t => {
       if (!t.date) return false;
-      const tDate = t.date.toDate();
+      const tDate = new Date(t.date);
       return tDate.getMonth() === currentDate.getMonth() &&
         tDate.getFullYear() === currentDate.getFullYear();
     });
   }, [allTransactions, currentDate]);
 
   const accumulatedBalance = useMemo(() => {
-    // This balance calculation implies it sums EVERYTHING up to the end of the current viewed month
+    // Sum everything up to end of current month
     return allTransactions.reduce((acc, curr) => {
       if (!curr.date) return acc;
-      const tDate = curr.date.toDate();
+      const tDate = new Date(curr.date);
       const limitDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0, 23, 59, 59);
 
       if (tDate <= limitDate) {
@@ -466,22 +460,6 @@ export default function FinanceApp() {
     setAiAdvice(result);
     setIsLoadingAdvice(false);
   };
-
-  if (!auth) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
-          <div className="bg-rose-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-rose-600">
-            <AlertTriangle size={32} />
-          </div>
-          <h2 className="text-xl font-bold text-slate-900 mb-2">Erro de Configuração</h2>
-          <p className="text-slate-600 mb-6">
-            O Firebase não foi inicializado corretamente. Verifique as variáveis de ambiente (.env).
-          </p>
-        </div>
-      </div>
-    )
-  }
 
   if (loading) {
     return (
@@ -611,9 +589,9 @@ export default function FinanceApp() {
               </button>
 
               <div className="hidden sm:flex flex-col items-end border-r pr-3 border-slate-200 mr-1">
-                <span className="text-xs font-bold text-slate-700">{user.displayName || user.email?.split('@')[0]}</span>
+                <span className="text-xs font-bold text-slate-700">{user.user_metadata?.full_name || user.email?.split('@')[0]}</span>
                 <button
-                  onClick={() => signOut(auth)}
+                  onClick={handleLogout}
                   className="text-[10px] text-rose-500 font-bold hover:underline"
                 >
                   SAIR
@@ -625,17 +603,6 @@ export default function FinanceApp() {
       </header>
 
       <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-8">
-
-        {authError && (
-          <div className="mb-6 bg-rose-50 border border-rose-200 text-rose-800 p-4 rounded-xl flex items-start gap-3 shadow-sm">
-            <AlertTriangle className="shrink-0 mt-0.5" size={20} />
-            <div>
-              <h3 className="font-bold">Erro de Autenticação</h3>
-              <p className="text-sm">{authError}</p>
-              <p className="text-xs mt-1 text-rose-600">Verifique se o método de login "Anônimo" está ativado no Firebase Console.</p>
-            </div>
-          </div>
-        )}
 
         {/* Summary & AI */}
         <div className="space-y-4">
@@ -923,7 +890,7 @@ export default function FinanceApp() {
                       <div>
                         <div className="flex items-center gap-2">
                           <p className="font-bold text-slate-800">{t.description}</p>
-                          {t.isAutoSalary && (
+                          {t.is_auto_salary && (
                             <span className="bg-green-100 text-green-700 text-[10px] px-1.5 py-0.5 rounded-full flex items-center gap-1 font-bold border border-green-200">
                               <CheckCircle size={10} /> AUTO
                             </span>
@@ -932,10 +899,10 @@ export default function FinanceApp() {
                         <div className="flex flex-wrap items-center gap-2 mt-1">
                           <Badge type={t.type} />
                           <span className="text-xs font-medium text-slate-400">• {t.category}</span>
-                          <span className="text-xs font-medium text-slate-400">• {t.date?.toDate().toLocaleDateString('pt-BR')}</span>
-                          {t.installment && (
+                          <span className="text-xs font-medium text-slate-400">• {new Date(t.date).toLocaleDateString('pt-BR')}</span>
+                          {t.installment_current && t.installment_total && (
                             <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200">
-                              {t.installment.current}/{t.installment.total}
+                              {t.installment_current}/{t.installment_total}
                             </span>
                           )}
                         </div>
