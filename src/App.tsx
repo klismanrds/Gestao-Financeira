@@ -43,7 +43,6 @@ import {
   YAxis,
   CartesianGrid,
   LabelList,
-  LineChart,
   Line,
   BarChart,
   Bar,
