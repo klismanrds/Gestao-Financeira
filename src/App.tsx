@@ -22,7 +22,10 @@ import {
   Search,
   Filter,
   Loader2,
-  Pencil
+  Pencil,
+  DollarSign,
+  LayoutDashboard,
+  History
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import { type User } from '@supabase/supabase-js';
@@ -39,7 +42,12 @@ import {
   XAxis,
   YAxis,
   CartesianGrid,
-  LabelList
+  LabelList,
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  ComposedChart
 } from 'recharts';
 
 const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
@@ -169,6 +177,7 @@ export default function FinanceApp() {
   const [filterType, setFilterType] = useState<'all' | 'income' | 'expense'>('all');
   const [showTransactionModal, setShowTransactionModal] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'history'>('dashboard');
 
   // Ensure light mode is strictly enforced
   useEffect(() => {
@@ -431,17 +440,39 @@ export default function FinanceApp() {
     }
   };
 
-  const handleOpenEditModal = (t: Transaction) => {
-    setEditingTransaction(t);
-    // Remove sufixo (X/Y) ou (Fixo) para uma edição mais limpa do nome base
-    const cleanDescription = t.description.replace(/\s\(\d+\/\d+\)$|\s\(Fixo\)$/, '');
-    setDescription(cleanDescription);
-    setAmount(t.amount.toString());
-    setType(t.type);
-    setCategory(t.category);
-    setDueDate(t.due_date ? t.due_date.split('T')[0] : t.date.split('T')[0]);
-    setIsRecurring(false); // Edição é individual para evitar complexidade de cascata
+  const handleOpenEditModal = (tx: Transaction) => {
+    setEditingTransaction(tx);
+    setDescription(tx.description.replace(/\s\(\d+\/\d+\)$|\s\(Fixo\)$/, ''));
+    setAmount(tx.amount.toString().replace('.', ','));
+    setType(tx.type);
+    setCategory(tx.category);
+    setDueDate(tx.date.split('T')[0]);
+    setIsRecurring(false);
     setIsFixedRecurrence(false);
+    setShowTransactionModal(true);
+  };
+
+  const handleOpenNewTransactionModal = () => {
+    setEditingTransaction(null);
+    setDescription('');
+    setAmount('');
+    setCategory('Outros');
+    setIsRecurring(false);
+    setIsFixedRecurrence(false);
+
+    // Set default date to the viewed month
+    const targetDate = new Date(currentDate);
+    const today = new Date();
+
+    // If we are looking at the current real-world month, use today's date
+    if (targetDate.getMonth() === today.getMonth() && targetDate.getFullYear() === today.getFullYear()) {
+      setDueDate(today.toISOString().split('T')[0]);
+    } else {
+      // Otherwise, default to the 1st day of the viewed month
+      targetDate.setDate(1);
+      setDueDate(targetDate.toISOString().split('T')[0]);
+    }
+
     setShowTransactionModal(true);
   };
 
@@ -740,7 +771,6 @@ export default function FinanceApp() {
       const monthBalance = allTransactions.reduce((acc, t) => {
         const tDate = new Date(t.date);
         const tMonthKey = tDate.getFullYear() * 12 + tDate.getMonth();
-        // Sum all transactions up to this month to show cumulative balance evolution
         if (tMonthKey <= monthKey) {
           return acc + (t.type === 'income' ? t.amount : -t.amount);
         }
@@ -753,6 +783,67 @@ export default function FinanceApp() {
       });
     }
     return months;
+  }, [allTransactions, currentDate]);
+
+  const expensesByMonthData = useMemo(() => {
+    const data = [];
+    const year = currentDate.getFullYear();
+    const currentMonth = currentDate.getMonth();
+
+    for (let i = 0; i <= currentMonth; i++) {
+      const d = new Date(year, i, 1);
+      const monthLabel = d.toLocaleDateString('pt-BR', { month: 'short' });
+
+      const monthExpenses = allTransactions.reduce((acc, t) => {
+        const tDate = new Date(t.date);
+        if (tDate.getFullYear() === year && tDate.getMonth() === i && t.type === 'expense') {
+          return acc + t.amount;
+        }
+        return acc;
+      }, 0);
+
+      data.push({
+        name: monthLabel,
+        despesa: parseFloat(monthExpenses.toFixed(2))
+      });
+    }
+    return data;
+  }, [allTransactions, currentDate]);
+
+  const comparisonData = useMemo(() => {
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+
+    const prevMonthDate = new Date(year, month - 1, 1);
+    const prevYear = prevMonthDate.getFullYear();
+    const prevMonth = prevMonthDate.getMonth();
+
+    const getStats = (y: number, m: number) => {
+      return allTransactions.reduce((acc, t) => {
+        const tDate = new Date(t.date);
+        if (tDate.getFullYear() === y && tDate.getMonth() === m) {
+          if (t.type === 'income') acc.income += t.amount;
+          else acc.expense += t.amount;
+        }
+        return acc;
+      }, { income: 0, expense: 0 });
+    };
+
+    const currentStats = getStats(year, month);
+    const prevStats = getStats(prevYear, prevMonth);
+
+    return [
+      {
+        name: prevMonthDate.toLocaleDateString('pt-BR', { month: 'short' }),
+        Receita: prevStats.income,
+        Despesa: prevStats.expense
+      },
+      {
+        name: currentDate.toLocaleDateString('pt-BR', { month: 'short' }),
+        Receita: currentStats.income,
+        Despesa: currentStats.expense
+      }
+    ];
   }, [allTransactions, currentDate]);
 
   const yearlySummary = useMemo(() => {
@@ -1018,16 +1109,33 @@ export default function FinanceApp() {
                   <h3 className="text-2xl font-black text-slate-900">{editingTransaction ? 'Editar Lançamento' : 'Novo Lançamento'}</h3>
                 </div>
                 {!editingTransaction && (
-                  <button
-                    type="button"
-                    onClick={() => setShowSmartInput(!showSmartInput)}
-                    className="text-[10px] bg-indigo-50 text-indigo-600 px-4 py-2 rounded-full flex items-center gap-2 hover:bg-indigo-100 transition-all font-black uppercase tracking-wider"
-                  >
-                    <Sparkles size={14} />
-                    {showSmartInput ? 'Fechar IA' : 'Usar IA'}
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <div className="hidden md:flex flex-col items-end">
+                      <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Lançando em</span>
+                      <span className="text-xs font-bold text-slate-500 capitalize">
+                        {currentDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowSmartInput(!showSmartInput)}
+                      className="text-[10px] bg-indigo-50 text-indigo-600 px-4 py-2 rounded-full flex items-center gap-2 hover:bg-indigo-100 transition-all font-black uppercase tracking-wider"
+                    >
+                      <Sparkles size={14} />
+                      {showSmartInput ? 'Fechar IA' : 'Usar IA'}
+                    </button>
+                  </div>
                 )}
               </div>
+
+              {!editingTransaction && (
+                <div className="mb-6 p-4 bg-emerald-50 border border-emerald-100 rounded-2xl flex items-center gap-3 animate-in fade-in slide-in-from-top-2">
+                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                  <p className="text-xs font-bold text-emerald-700">
+                    Atenção: Este lançamento será registrado em <span className="uppercase">{currentDate.toLocaleDateString('pt-BR', { month: 'long' })}</span>.
+                  </p>
+                </div>
+              )}
 
               {/* AI Smart Input */}
               {showSmartInput && (
@@ -1213,43 +1321,52 @@ export default function FinanceApp() {
       }
 
       {/* Header - Transparent & Premium */}
-      <header className="bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-0 z-20 shadow-sm transition-all duration-300">
+      <header className="bg-slate-900 backdrop-blur-xl border-b border-slate-800 sticky top-0 z-20 shadow-xl transition-all duration-300">
         <div className="max-w-[80%] mx-auto px-4 lg:px-0 py-5">
           <div className="flex flex-col md:flex-row justify-between items-center gap-6">
             <div className="flex items-center gap-4">
-              <div className="bg-gradient-to-tr from-emerald-600 to-teal-500 p-3 rounded-2xl text-white shadow-lg shadow-emerald-100 transform -rotate-1">
-                <Wallet size={28} />
+              <div className="p-1 rounded-2xl shadow-2xl overflow-hidden border border-slate-700 bg-slate-800">
+                <img src="/logo-rds.png" alt="Logo" className="w-14 h-14 object-contain rounded-xl" />
               </div>
               <div>
-                <h1 className="text-2xl font-black text-slate-900 flex items-center gap-2">
-                  Finanças <span className="text-emerald-600">rDs</span>
-                  <span className="hidden sm:inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-600 border border-emerald-100 uppercase tracking-wider ml-2">
+                <h1 className="text-2xl font-black text-white flex items-center gap-2">
+                  Finanças <span className="text-emerald-400">rDs</span>
+                  <button
+                    onClick={() => {
+                      if (!showChat && chatMessages.length === 0) {
+                        handleGenerateAdvice();
+                      } else {
+                        setShowChat(true);
+                      }
+                    }}
+                    className="hidden sm:inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 uppercase tracking-widest ml-2 hover:bg-emerald-500/20 transition-all active:scale-95 cursor-pointer"
+                  >
                     Premium AI ✨
-                  </span>
+                  </button>
                 </h1>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Gestão de Elite</p>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Gestão Financeira</p>
               </div>
             </div>
 
             {/* Month Selector Luxe */}
-            <div className="flex items-center bg-slate-100 shadow-inner rounded-2xl p-1.5 min-w-[280px] justify-between border border-slate-200/50">
-              <button onClick={() => changeMonth(-1)} className="p-2.5 hover:bg-white hover:shadow-sm rounded-xl transition-all text-slate-500 hover:text-emerald-600 active:scale-90">
+            <div className="flex items-center bg-slate-800/50 shadow-inner rounded-2xl p-1.5 min-w-[280px] justify-between border border-slate-700/50">
+              <button onClick={() => changeMonth(-1)} className="p-2.5 hover:bg-slate-800 hover:shadow-sm rounded-xl transition-all text-slate-400 hover:text-emerald-400 active:scale-90">
                 <ChevronLeft size={22} />
               </button>
               <div className="flex flex-col items-center">
-                <span className="text-xs font-black text-slate-400 uppercase tracking-widest">{currentDate.getFullYear()}</span>
-                <span className="text-base font-bold text-slate-800 capitalize leading-tight">
+                <span className="text-xs font-black text-slate-500 uppercase tracking-widest">{currentDate.getFullYear()}</span>
+                <span className="text-base font-bold text-white capitalize leading-tight">
                   {currentDate.toLocaleDateString('pt-BR', { month: 'long' })}
                 </span>
               </div>
-              <button onClick={() => changeMonth(1)} className="p-2.5 hover:bg-white hover:shadow-sm rounded-xl transition-all text-slate-500 hover:text-emerald-600 active:scale-90">
+              <button onClick={() => changeMonth(1)} className="p-2.5 hover:bg-slate-800 hover:shadow-sm rounded-xl transition-all text-slate-400 hover:text-emerald-400 active:scale-90">
                 <ChevronRight size={22} />
               </button>
             </div>
 
             <div className="flex items-center gap-5">
               <button
-                onClick={() => setShowTransactionModal(true)}
+                onClick={handleOpenNewTransactionModal}
                 className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-2xl font-black text-sm shadow-lg shadow-emerald-100 transition-all flex items-center gap-2 transform active:scale-95"
               >
                 <Plus size={20} />
@@ -1258,23 +1375,23 @@ export default function FinanceApp() {
 
               <button
                 onClick={() => setShowSettings(true)}
-                className="p-3 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-2xl transition-all border border-transparent hover:border-emerald-100"
+                className="p-3 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-2xl transition-all border border-transparent hover:border-emerald-500/20"
                 title="Configurações e Categorias"
               >
                 <Settings size={24} className="animate-spin-slow hover:animate-spin" />
               </button>
 
-              <div className="flex items-center gap-3 pl-5 border-l border-slate-200">
+              <div className="flex items-center gap-3 pl-5 border-l border-slate-800">
                 <div className="flex flex-col items-end">
-                  <span className="text-sm font-black text-slate-800 leading-none">{user.user_metadata?.full_name || user.email?.split('@')[0]}</span>
+                  <span className="text-sm font-black text-white leading-none">{user.user_metadata?.full_name || user.email?.split('@')[0]}</span>
                   <button
                     onClick={handleLogout}
-                    className="text-[10px] text-rose-500 font-black hover:text-rose-600 uppercase tracking-tighter"
+                    className="text-[10px] text-rose-400 font-black hover:text-rose-300 uppercase tracking-tighter"
                   >
                     Encerrar Sessão
                   </button>
                 </div>
-                <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-slate-100 to-slate-200 border-2 border-white shadow-sm flex items-center justify-center text-slate-500 font-bold overflow-hidden">
+                <div className="w-10 h-10 rounded-2xl bg-slate-800 border-2 border-slate-700 shadow-sm flex items-center justify-center text-slate-300 font-bold overflow-hidden">
                   {user.user_metadata?.full_name?.charAt(0) || user.email?.charAt(0).toUpperCase()}
                 </div>
               </div>
@@ -1283,366 +1400,497 @@ export default function FinanceApp() {
         </div>
       </header>
 
-      <main className="max-w-[80%] mx-auto py-8 space-y-8">
-
-        {/* Summary Luxe Section */}
-        <div className="space-y-6">
-          <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
-            <Card className="premium-gradient-blue text-white border-none relative overflow-hidden group min-h-[160px] flex flex-col justify-between p-6 rounded-[2.5rem]">
-              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-125 transition-transform duration-700">
-                <Wallet size={120} />
-              </div>
-              <div className="relative z-10">
-                <p className="text-blue-100 text-xs font-black uppercase tracking-[0.2em] mb-1">Patrimônio Total</p>
-                <h2 className="text-4xl font-black mt-1 tracking-tighter">
-                  <CountingNumber value={accumulatedBalance} formatter={formatCurrency} />
-                </h2>
-              </div>
-              <div className="text-sm text-blue-100 relative z-10 flex flex-col gap-1 mt-4">
-                <div className="pt-3 border-t border-white/20 text-[10px] font-black uppercase tracking-widest flex justify-between items-center opacity-70">
-                  <span>Saldo Acumulado</span>
-                  <div className="flex gap-1">
-                    <div className="w-1 h-1 rounded-full bg-white animate-pulse"></div>
-                    <div className="w-1 h-1 rounded-full bg-white animate-pulse [animation-delay:0.2s]"></div>
-                    <div className="w-1 h-1 rounded-full bg-white animate-pulse [animation-delay:0.4s]"></div>
-                  </div>
-                </div>
-              </div>
-            </Card>
-
-            <Card className="premium-gradient-green text-white border-none relative overflow-hidden group min-h-[160px] flex flex-col justify-between p-6 rounded-[2.5rem]">
-              <div className="absolute -top-4 -right-4 p-6 opacity-20 group-hover:rotate-12 transition-transform duration-700">
-                <ArrowUpRight size={100} />
-              </div>
-              <div className="relative z-10">
-                <p className="text-emerald-100 text-xs font-black uppercase tracking-[0.2em] mb-1">Entradas (Mês)</p>
-                <h2 className="text-4xl font-black mt-1 tracking-tighter">
-                  <CountingNumber value={monthlySummary.income} formatter={formatCurrency} />
-                </h2>
-              </div>
-              <div className="pt-3 border-t border-white/20 text-[10px] font-black uppercase tracking-widest flex justify-between items-center opacity-70">
-                <span>Receitas Totais</span>
-                <TrendingUp size={16} />
-              </div>
-            </Card>
-
-            <Card className="premium-gradient-rose text-white border-none relative overflow-hidden group min-h-[160px] flex flex-col justify-between p-6 rounded-[2.5rem]">
-              <div className="absolute -top-4 -right-4 p-6 opacity-20 group-hover:-rotate-12 transition-transform duration-700">
-                <ArrowDownRight size={100} />
-              </div>
-              <div className="relative z-10">
-                <p className="text-rose-100 text-xs font-black uppercase tracking-[0.2em] mb-1">Saídas (Mês)</p>
-                <h2 className="text-4xl font-black mt-1 tracking-tighter">
-                  <CountingNumber value={monthlySummary.expense} formatter={formatCurrency} />
-                </h2>
-              </div>
-              <div className="pt-3 border-t border-white/20 text-[10px] font-black uppercase tracking-widest flex justify-between items-center opacity-70">
-                <span>Despesas Totais</span>
-                <TrendingDown size={16} />
-              </div>
-            </Card>
-
-            <Card className="premium-gradient-violet text-white border-none relative overflow-hidden group min-h-[160px] flex flex-col justify-between p-6 rounded-[2.5rem]">
-              <div className="absolute -bottom-4 -right-4 p-6 opacity-20 group-hover:scale-110 transition-transform duration-700">
-                <CheckCircle size={100} />
-              </div>
-              <div className="relative z-10">
-                <p className="text-violet-100 text-xs font-black uppercase tracking-[0.2em] mb-1">Pagas (Mês)</p>
-                <h2 className="text-4xl font-black mt-1 tracking-tighter">
-                  <CountingNumber value={monthlySummary.paidExpenses} formatter={formatCurrency} />
-                </h2>
-              </div>
-              <div className="pt-3 border-t border-white/20 text-[10px] font-black uppercase tracking-widest flex justify-between items-center opacity-70">
-                <span>Despesas Liquidadas</span>
-                <CheckCircle size={16} />
-              </div>
-            </Card>
-
-            <Card className="bg-white border-2 border-slate-100 text-slate-800 relative overflow-hidden group min-h-[160px] flex flex-col justify-between p-6 rounded-[2.5rem] hover:border-emerald-200 transition-all duration-500 shadow-sm">
-              <div className="absolute bottom-0 right-0 p-6 opacity-5 group-hover:scale-110 transition-transform duration-700 text-emerald-600">
-                <PieChart size={100} />
-              </div>
-              <div className="relative z-10">
-                <p className="text-slate-400 text-xs font-black uppercase tracking-[0.2em] mb-1">Resultado (Mês)</p>
-                <h2 className={`text-4xl font-black mt-1 tracking-tighter ${monthlySummary.total >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                  <CountingNumber value={monthlySummary.total} formatter={formatCurrency} />
-                </h2>
-              </div>
-              <div className="pt-3 border-t border-slate-100 text-[10px] font-black uppercase tracking-widest flex justify-between items-center text-slate-400">
-                <span>Saldo Líquido</span>
-                <Repeat size={16} className="text-slate-300" />
-              </div>
-            </Card>
-          </section>
-
-
-          <section className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <Card className="min-h-[450px] shadow-sm hover:shadow-md transition-shadow duration-500 border border-slate-100">
-              <div className="flex items-center justify-between mb-8">
-                <h3 className="text-xl font-black text-slate-800 flex items-center gap-3">
-                  <div className="p-2 bg-emerald-50 rounded-xl text-emerald-600">
-                    <PieChart size={22} />
-                  </div>
-                  Distribuição de Gastos
-                </h3>
-                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest bg-slate-50 px-3 py-1 rounded-full">Visualização Mensal</div>
-              </div>
-              <div className="h-[320px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <RePieChart>
-                    <Pie
-                      data={pieData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={85}
-                      outerRadius={110}
-                      paddingAngle={8}
-                      dataKey="value"
-                      stroke="none"
-                      label={({ name, value }) => `${name}: ${formatCurrency(value)}`}
-                      labelLine={{ stroke: '#cbd5e1', strokeWidth: 1 }}
-                    >
-                      {pieData.map((_entry, index) => (
-                        <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} className="hover:opacity-80 transition-opacity cursor-pointer" />
-                      ))}
-                    </Pie>
-                    <Tooltip
-                      contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 30px rgba(0,0,0,0.1)', padding: '12px' }}
-                      itemStyle={{ fontWeight: 'bold' }}
-                      formatter={(value: any) => [formatCurrency(Number(value)), 'Valor']}
-                    />
-                    <Legend
-                      verticalAlign="bottom"
-                      height={36}
-                      iconType="circle"
-                      wrapperStyle={{ paddingTop: '20px', fontSize: '11px', fontWeight: 'bold' }}
-                      formatter={(value, entry: any) => (
-                        <span className="text-slate-600 mr-2">
-                          {value}: <span className="text-slate-900 font-black">{formatCurrency(entry.payload.value)}</span>
-                        </span>
-                      )}
-                    />
-                  </RePieChart>
-                </ResponsiveContainer>
-              </div>
-            </Card>
-
-            <Card className="min-h-[450px] shadow-sm hover:shadow-md transition-shadow duration-500 border border-slate-100">
-              <div className="flex items-center justify-between mb-8">
-                <h3 className="text-xl font-black text-slate-800 flex items-center gap-3">
-                  <div className="p-2 bg-indigo-50 rounded-xl text-indigo-600">
-                    <TrendingUp size={22} />
-                  </div>
-                  Evolução do Saldo
-                </h3>
-                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest bg-slate-50 px-3 py-1 rounded-full">Acumulado do Ano</div>
-              </div>
-              <div className="h-[320px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={trendData}>
-                    <defs>
-                      <linearGradient id="colorSaldo" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#6366f1" stopOpacity={0.4} />
-                        <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 11, fontWeight: 'bold' }} />
-                    <YAxis hide />
-                    <Tooltip
-                      contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 30px rgba(0,0,0,0.1)', padding: '12px' }}
-                      formatter={(value: any) => [formatCurrency(Number(value)), 'Patrimônio']}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="saldo"
-                      stroke="#6366f1"
-                      strokeWidth={4}
-                      fillOpacity={1}
-                      fill="url(#colorSaldo)"
-                      animationDuration={1500}
-                    >
-                      <LabelList
-                        dataKey="saldo"
-                        position="top"
-                        offset={15}
-                        formatter={(value: any) => formatCurrency(Number(value))}
-                        style={{ fontSize: '10px', fill: '#6366f1', fontWeight: '900' }}
-                      />
-                    </Area>
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            </Card>
-          </section>
-
-
+      {/* View Selector Luxe */}
+      <nav className="bg-slate-100 border-b border-slate-200 py-4 transition-all duration-300">
+        <div className="max-w-[80%] mx-auto flex justify-center">
+          <div className="bg-white/50 backdrop-blur-md p-1.5 rounded-2xl flex border border-slate-200/50 shadow-sm w-full max-w-md">
+            <button
+              onClick={() => setActiveTab('dashboard')}
+              className={`flex-1 flex items-center justify-center gap-3 py-3 rounded-xl text-sm font-black transition-all duration-500 ${activeTab === 'dashboard'
+                ? 'bg-slate-900 text-white shadow-xl scale-[1.02]'
+                : 'text-slate-400 hover:text-slate-600 hover:bg-white/50'
+                }`}
+            >
+              <LayoutDashboard size={20} />
+              Dashboard
+            </button>
+            <button
+              onClick={() => setActiveTab('history')}
+              className={`flex-1 flex items-center justify-center gap-3 py-3 rounded-xl text-sm font-black transition-all duration-500 ${activeTab === 'history'
+                ? 'bg-slate-900 text-white shadow-xl scale-[1.02]'
+                : 'text-slate-400 hover:text-slate-600 hover:bg-white/50'
+                }`}
+            >
+              <History size={20} />
+              Histórico
+            </button>
+          </div>
         </div>
+      </nav>
 
-        <div className="w-full">
-          <section className="space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
-              <div className="flex items-center gap-3">
-                <div className="w-1.5 h-8 bg-emerald-500 rounded-full"></div>
-                <h3 className="text-2xl font-black text-slate-900">
-                  Histórico de <span className="text-emerald-600 capitalize">{currentDate.toLocaleDateString('pt-BR', { month: 'long' })}</span>
-                </h3>
-              </div>
-              <div className="flex items-center gap-2 px-4 py-1.5 bg-white border border-slate-100 rounded-full shadow-sm text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                {filteredTransactions.length} Operações
-              </div>
-            </div>
+      <main className="max-w-[80%] mx-auto py-8 space-y-8 min-h-[70vh]">
 
-            {/* Search and Filters Luxe */}
-            <div className="flex flex-col sm:flex-row gap-4 mb-8 items-center">
-              {/* Type Filter Pill (Image Inspired) */}
-              <div className="bg-white p-1 rounded-full flex border border-slate-200 shadow-sm h-[56px] min-w-[300px]">
-                <button
-                  onClick={() => setFilterType('all')}
-                  className={`flex-1 px-4 rounded-full text-xs font-black transition-all ${filterType === 'all' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
-                >
-                  Ambas
-                </button>
-                <button
-                  onClick={() => setFilterType('income')}
-                  className={`flex-1 px-4 rounded-full text-xs font-black transition-all flex items-center justify-center gap-2 ${filterType === 'income' ? 'bg-emerald-50 text-emerald-600 shadow-sm ring-1 ring-emerald-100' : 'text-slate-400 hover:text-slate-600'}`}
-                >
-                  <TrendingUp size={14} /> Entrada
-                </button>
-                <button
-                  onClick={() => setFilterType('expense')}
-                  className={`flex-1 px-4 rounded-full text-xs font-black transition-all flex items-center justify-center gap-2 ${filterType === 'expense' ? 'bg-rose-50 text-rose-600 shadow-sm ring-1 ring-rose-100' : 'text-slate-400 hover:text-slate-600'}`}
-                >
-                  <TrendingDown size={14} /> Saída
-                </button>
-              </div>
-
-              <div className="relative flex-1 group w-full h-[56px]">
-                <Search size={22} className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-indigo-500 transition-colors" />
-                <input
-                  type="text"
-                  placeholder="Pesquisar..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full h-full pl-14 pr-6 bg-white border border-slate-200 rounded-full focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all font-bold text-slate-700 placeholder:text-slate-300 shadow-sm"
-                />
-              </div>
-
-              <div className="relative min-w-[240px] w-full h-[56px]">
-                <Filter size={20} className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" />
-                <select
-                  value={filterCategory}
-                  onChange={(e) => setFilterCategory(e.target.value)}
-                  className="w-full h-full pl-14 pr-10 bg-white border border-slate-200 rounded-full focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none appearance-none font-bold text-slate-700 cursor-pointer shadow-sm"
-                >
-                  <option value="All">Todas Categorias</option>
-                  {categories.map(cat => (
-                    <option key={cat} value={cat}>{cat}</option>
-                  ))}
-                </select>
-                <div className="absolute right-6 top-1/2 -translate-y-1/2 pointer-events-none text-slate-300">
-                  <ChevronRight size={18} className="rotate-90" />
-                </div>
-              </div>
-            </div>
-
-            {filteredTransactions.length === 0 ? (
-              <div className="text-center py-20 bg-white rounded-2xl border border-dashed border-slate-300">
-                <div className="bg-slate-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Calendar className="text-slate-300" size={32} />
-                </div>
-                <h4 className="text-slate-900 font-bold text-lg">Sem resultados</h4>
-                <p className="text-slate-500 text-sm mt-1 max-w-xs mx-auto">
-                  {searchTerm || filterCategory !== 'All'
-                    ? 'Nenhum lançamento corresponde aos filtros aplicados.'
-                    : 'Não há lançamentos para este mês ainda.'}
-                </p>
-                {(searchTerm || filterCategory !== 'All') && (
-                  <button
-                    onClick={() => { setSearchTerm(''); setFilterCategory('All'); }}
-                    className="mt-4 text-indigo-600 text-sm font-bold hover:underline"
-                  >
-                    Limpar Filtros
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {filteredTransactions.map((t) => (
-                  <div
-                    key={t.id}
-                    className="group glass-card p-4 rounded-2xl border-none hover:shadow-xl transition-all flex items-center justify-between animate-in fade-in slide-in-from-bottom-2 duration-300"
-                  >
-                    <div className="flex items-center gap-4">
-                      {t.type === 'expense' && (
-                        <button
-                          onClick={() => togglePaid(t)}
-                          className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all shrink-0 ${t.is_paid ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-200 hover:border-emerald-300'}`}
-                          title={t.is_paid ? "Marcar como não pago" : "Marcar como pago"}
-                        >
-                          {t.is_paid && <CheckCircle size={14} />}
-                        </button>
-                      )}
-                      <div className={`p-3 rounded-xl shrink-0 ${t.type === 'income' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
-                        {t.type === 'income' ? <TrendingUp size={20} /> : <TrendingDown size={20} />}
-                      </div>
-                      <div className={t.is_paid ? 'opacity-50 transition-opacity' : 'transition-opacity'}>
-                        <div className="flex items-center gap-2">
-                          <p className="font-bold text-slate-900">{t.description}</p>
-                          {t.is_auto_salary && (
-                            <span className="bg-green-100 text-green-700 text-[10px] px-1.5 py-0.5 rounded-full flex items-center gap-1 font-bold border border-green-200">
-                              <CheckCircle size={10} /> AUTO
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2 mt-1">
-                          <Badge type={t.type} />
-                          <span className="text-slate-500 font-bold">• {t.category}</span>
-                          <span className={`${!t.is_paid && t.due_date && new Date(t.due_date) < new Date() ? 'text-rose-600 font-black animate-pulse' : 'text-slate-500 font-semibold'}`}>
-                            • {new Date(t.date).toLocaleDateString('pt-BR')}
-                            {!t.is_paid && t.due_date && new Date(t.due_date) < new Date() && ' (VENCIDO!)'}
-                          </span>
-                          {t.installment_current && t.installment_total && (
-                            <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200">
-                              {t.installment_current}/{t.installment_total}
-                            </span>
-                          )}
-                        </div>
+        {activeTab === 'dashboard' && (
+          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
+            {/* Summary Luxe Section */}
+            <div className="space-y-6">
+              <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
+                <Card className="premium-gradient-blue text-white border-none relative overflow-hidden group min-h-[160px] flex flex-col justify-between p-6 rounded-[2.5rem]">
+                  <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-125 transition-transform duration-700">
+                    <Wallet size={120} />
+                  </div>
+                  <div className="relative z-10">
+                    <p className="text-blue-100 text-xs font-black uppercase tracking-[0.2em] mb-1">Patrimônio Total</p>
+                    <h2 className="text-4xl font-black mt-1 tracking-tighter">
+                      <CountingNumber value={accumulatedBalance} formatter={formatCurrency} />
+                    </h2>
+                  </div>
+                  <div className="text-sm text-blue-100 relative z-10 flex flex-col gap-1 mt-4">
+                    <div className="pt-3 border-t border-white/20 text-[10px] font-black uppercase tracking-widest flex justify-between items-center opacity-70">
+                      <span>Saldo Acumulado</span>
+                      <div className="flex gap-1">
+                        <div className="w-1 h-1 rounded-full bg-white animate-pulse"></div>
+                        <div className="w-1 h-1 rounded-full bg-white animate-pulse [animation-delay:0.2s]"></div>
+                        <div className="w-1 h-1 rounded-full bg-white animate-pulse [animation-delay:0.4s]"></div>
                       </div>
                     </div>
+                  </div>
+                </Card>
 
-                    <div className="flex flex-col items-end gap-1">
-                      <span className={`font-black text-xl tabular-nums ${t.type === 'income' ? 'text-emerald-600' : 'text-slate-900'}`}>
-                        {t.type === 'income' ? '+' : '-'}{formatCurrency(t.amount)}
-                      </span>
-                      <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all">
-                        {!t.is_auto_salary && (
+                <Card className="premium-gradient-green text-white border-none relative overflow-hidden group min-h-[160px] flex flex-col justify-between p-6 rounded-[2.5rem]">
+                  <div className="absolute -top-4 -right-4 p-6 opacity-20 group-hover:rotate-12 transition-transform duration-700">
+                    <ArrowUpRight size={100} />
+                  </div>
+                  <div className="relative z-10">
+                    <p className="text-emerald-100 text-xs font-black uppercase tracking-[0.2em] mb-1">Entradas (Mês)</p>
+                    <h2 className="text-4xl font-black mt-1 tracking-tighter">
+                      <CountingNumber value={monthlySummary.income} formatter={formatCurrency} />
+                    </h2>
+                  </div>
+                  <div className="pt-3 border-t border-white/20 text-[10px] font-black uppercase tracking-widest flex justify-between items-center opacity-70">
+                    <span>Receitas Totais</span>
+                    <TrendingUp size={16} />
+                  </div>
+                </Card>
+
+                <Card className="premium-gradient-rose text-white border-none relative overflow-hidden group min-h-[160px] flex flex-col justify-between p-6 rounded-[2.5rem]">
+                  <div className="absolute -top-4 -right-4 p-6 opacity-20 group-hover:-rotate-12 transition-transform duration-700">
+                    <ArrowDownRight size={100} />
+                  </div>
+                  <div className="relative z-10">
+                    <p className="text-rose-100 text-xs font-black uppercase tracking-[0.2em] mb-1">Saídas (Mês)</p>
+                    <h2 className="text-4xl font-black mt-1 tracking-tighter">
+                      <CountingNumber value={monthlySummary.expense} formatter={formatCurrency} />
+                    </h2>
+                  </div>
+                  <div className="pt-3 border-t border-white/20 text-[10px] font-black uppercase tracking-widest flex justify-between items-center opacity-70">
+                    <span>Despesas Totais</span>
+                    <TrendingDown size={16} />
+                  </div>
+                </Card>
+
+                <Card className="premium-gradient-violet text-white border-none relative overflow-hidden group min-h-[160px] flex flex-col justify-between p-6 rounded-[2.5rem]">
+                  <div className="absolute -bottom-4 -right-4 p-6 opacity-20 group-hover:scale-110 transition-transform duration-700">
+                    <CheckCircle size={100} />
+                  </div>
+                  <div className="relative z-10">
+                    <p className="text-violet-100 text-xs font-black uppercase tracking-[0.2em] mb-1">Pagas (Mês)</p>
+                    <h2 className="text-4xl font-black mt-1 tracking-tighter">
+                      <CountingNumber value={monthlySummary.paidExpenses} formatter={formatCurrency} />
+                    </h2>
+                  </div>
+                  <div className="pt-3 border-t border-white/20 text-[10px] font-black uppercase tracking-widest flex justify-between items-center opacity-70">
+                    <span>Despesas Liquidadas</span>
+                    <CheckCircle size={16} />
+                  </div>
+                </Card>
+
+                <Card className="bg-white border-2 border-slate-100 text-slate-800 relative overflow-hidden group min-h-[160px] flex flex-col justify-between p-6 rounded-[2.5rem] hover:border-emerald-200 transition-all duration-500 shadow-sm">
+                  <div className="absolute bottom-0 right-0 p-6 opacity-5 group-hover:scale-110 transition-transform duration-700 text-emerald-600">
+                    <PieChart size={100} />
+                  </div>
+                  <div className="relative z-10">
+                    <p className="text-slate-400 text-xs font-black uppercase tracking-[0.2em] mb-1">Resultado (Mês)</p>
+                    <h2 className={`text-4xl font-black mt-1 tracking-tighter ${monthlySummary.total >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      <CountingNumber value={monthlySummary.total} formatter={formatCurrency} />
+                    </h2>
+                  </div>
+                  <div className="pt-3 border-t border-slate-100 text-[10px] font-black uppercase tracking-widest flex justify-between items-center text-slate-400">
+                    <span>Saldo Líquido</span>
+                    <DollarSign size={16} className="text-slate-300" />
+                  </div>
+                </Card>
+              </section>
+
+
+              <section className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <Card className="min-h-[450px] shadow-sm hover:shadow-md transition-shadow duration-500 border border-slate-100">
+                  <div className="flex items-center justify-between mb-8">
+                    <h3 className="text-xl font-black text-slate-800 flex items-center gap-3">
+                      <div className="p-2 bg-emerald-50 rounded-xl text-emerald-600">
+                        <PieChart size={22} />
+                      </div>
+                      Distribuição de Gastos
+                    </h3>
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest bg-slate-50 px-3 py-1 rounded-full">Visualização Mensal</div>
+                  </div>
+                  <div className="h-[320px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <RePieChart>
+                        <Pie
+                          data={pieData}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={85}
+                          outerRadius={110}
+                          paddingAngle={8}
+                          dataKey="value"
+                          stroke="none"
+                          label={({ name, value }) => `${name}: ${formatCurrency(value)}`}
+                          labelLine={{ stroke: '#cbd5e1', strokeWidth: 1 }}
+                        >
+                          {pieData.map((_entry, index) => (
+                            <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} className="hover:opacity-80 transition-opacity cursor-pointer" />
+                          ))}
+                        </Pie>
+                        <Tooltip
+                          contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 30px rgba(0,0,0,0.1)', padding: '12px' }}
+                          itemStyle={{ fontWeight: 'bold' }}
+                          formatter={(value: any) => [formatCurrency(Number(value)), 'Valor']}
+                        />
+                        <Legend
+                          verticalAlign="bottom"
+                          height={36}
+                          iconType="circle"
+                          wrapperStyle={{ paddingTop: '20px', fontSize: '11px', fontWeight: 'bold' }}
+                          formatter={(value, entry: any) => (
+                            <span className="text-slate-600 mr-2">
+                              {value}: <span className="text-slate-900 font-black">{formatCurrency(entry.payload.value)}</span>
+                            </span>
+                          )}
+                        />
+                      </RePieChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Card>
+
+                <Card className="min-h-[450px] shadow-sm hover:shadow-md transition-shadow duration-500 border border-slate-100">
+                  <div className="flex items-center justify-between mb-8">
+                    <h3 className="text-xl font-black text-slate-800 flex items-center gap-3">
+                      <div className="p-2 bg-indigo-50 rounded-xl text-indigo-600">
+                        <TrendingUp size={22} />
+                      </div>
+                      Evolução do Saldo
+                    </h3>
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest bg-slate-50 px-3 py-1 rounded-full">Acumulado do Ano</div>
+                  </div>
+                  <div className="h-[320px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={trendData}>
+                        <defs>
+                          <linearGradient id="colorSaldo" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#6366f1" stopOpacity={0.4} />
+                            <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 11, fontWeight: 'bold' }} />
+                        <YAxis hide />
+                        <Tooltip
+                          contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 30px rgba(0,0,0,0.1)', padding: '12px' }}
+                          formatter={(value: any) => [formatCurrency(Number(value)), 'Patrimônio']}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="saldo"
+                          stroke="#6366f1"
+                          strokeWidth={4}
+                          fillOpacity={1}
+                          fill="url(#colorSaldo)"
+                          animationDuration={1500}
+                        >
+                          <LabelList
+                            dataKey="saldo"
+                            position="top"
+                            offset={15}
+                            style={{ fontSize: '10px', fill: '#6366f1', fontWeight: '900' }}
+                          />
+                        </Area>
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Card>
+
+                <Card className="min-h-[450px] shadow-sm hover:shadow-md transition-shadow duration-500 border border-slate-100">
+                  <div className="flex items-center justify-between mb-8">
+                    <h3 className="text-xl font-black text-slate-800 flex items-center gap-3">
+                      <div className="p-2 bg-rose-50 rounded-xl text-rose-600">
+                        <TrendingDown size={22} />
+                      </div>
+                      Fluxo de Despesas
+                    </h3>
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest bg-slate-50 px-3 py-1 rounded-full">Análise Anual</div>
+                  </div>
+                  <div className="h-[320px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={expensesByMonthData}>
+                        <defs>
+                          <linearGradient id="colorDespesa" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#ef4444" stopOpacity={0.2} />
+                            <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 11, fontWeight: 'bold' }} />
+                        <YAxis hide />
+                        <Tooltip
+                          contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 30px rgba(0,0,0,0.1)', padding: '12px' }}
+                          formatter={(value: any) => [formatCurrency(Number(value)), 'Total Despesa']}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="despesa"
+                          stroke="none"
+                          fill="url(#colorDespesa)"
+                          animationDuration={1500}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="despesa"
+                          stroke="#ef4444"
+                          strokeWidth={4}
+                          dot={{ r: 6, fill: '#ef4444', strokeWidth: 2, stroke: '#fff' }}
+                          activeDot={{ r: 8, strokeWidth: 0 }}
+                          animationDuration={1500}
+                        >
+                          <LabelList
+                            dataKey="despesa"
+                            position="top"
+                            offset={15}
+                            formatter={(value: any) => formatCurrency(Number(value))}
+                            style={{ fontSize: '10px', fill: '#ef4444', fontWeight: '900' }}
+                          />
+                        </Line>
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Card>
+
+                <Card className="min-h-[450px] shadow-sm hover:shadow-md transition-shadow duration-500 border border-slate-100">
+                  <div className="flex items-center justify-between mb-8">
+                    <h3 className="text-xl font-black text-slate-800 flex items-center gap-3">
+                      <div className="p-2 bg-blue-50 rounded-xl text-blue-600">
+                        <ArrowUpRight size={22} />
+                      </div>
+                      Comparativo Mensal
+                    </h3>
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest bg-slate-50 px-3 py-1 rounded-full">Atual vs Anterior</div>
+                  </div>
+                  <div className="h-[320px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={comparisonData}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 11, fontWeight: 'bold' }} />
+                        <YAxis hide />
+                        <Tooltip
+                          contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 30px rgba(0,0,0,0.1)', padding: '12px' }}
+                        />
+                        <Legend
+                          verticalAlign="top"
+                          align="right"
+                          iconType="circle"
+                          wrapperStyle={{ paddingBottom: '20px', fontSize: '11px', fontWeight: 'bold' }}
+                        />
+                        <Bar dataKey="Receita" fill="#10b981" radius={[6, 6, 0, 0]} barSize={30} animationDuration={1500}>
+                          <LabelList
+                            dataKey="Receita"
+                            position="top"
+                            formatter={(value: any) => formatCurrency(Number(value))}
+                            style={{ fontSize: '9px', fill: '#10b981', fontWeight: '900' }}
+                          />
+                        </Bar>
+                        <Bar dataKey="Despesa" fill="#f43f5e" radius={[6, 6, 0, 0]} barSize={30} animationDuration={1500}>
+                          <LabelList
+                            dataKey="Despesa"
+                            position="top"
+                            formatter={(value: any) => formatCurrency(Number(value))}
+                            style={{ fontSize: '9px', fill: '#f43f5e', fontWeight: '900' }}
+                          />
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Card>
+              </section>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'history' && (
+          <div className="w-full animate-in fade-in slide-in-from-bottom-4 duration-700">
+            <section className="space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-1.5 h-8 bg-emerald-500 rounded-full"></div>
+                  <h3 className="text-2xl font-black text-slate-900">
+                    Histórico de <span className="text-emerald-600 capitalize">{currentDate.toLocaleDateString('pt-BR', { month: 'long' })}</span>
+                  </h3>
+                </div>
+                <div className="flex items-center gap-2 px-4 py-1.5 bg-white border border-slate-100 rounded-full shadow-sm text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                  {filteredTransactions.length} Operações
+                </div>
+              </div>
+
+              {/* Search and Filters Luxe */}
+              <div className="flex flex-col sm:flex-row gap-4 mb-8 items-center">
+                {/* Type Filter Pill (Image Inspired) */}
+                <div className="bg-white p-1 rounded-full flex border border-slate-200 shadow-sm h-[56px] min-w-[300px]">
+                  <button
+                    onClick={() => setFilterType('all')}
+                    className={`flex-1 px-4 rounded-full text-xs font-black transition-all ${filterType === 'all' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
+                  >
+                    Ambas
+                  </button>
+                  <button
+                    onClick={() => setFilterType('income')}
+                    className={`flex-1 px-4 rounded-full text-xs font-black transition-all flex items-center justify-center gap-2 ${filterType === 'income' ? 'bg-emerald-50 text-emerald-600 shadow-sm ring-1 ring-emerald-100' : 'text-slate-400 hover:text-slate-600'}`}
+                  >
+                    <TrendingUp size={14} /> Entrada
+                  </button>
+                  <button
+                    onClick={() => setFilterType('expense')}
+                    className={`flex-1 px-4 rounded-full text-xs font-black transition-all flex items-center justify-center gap-2 ${filterType === 'expense' ? 'bg-rose-50 text-rose-600 shadow-sm ring-1 ring-rose-100' : 'text-slate-400 hover:text-slate-600'}`}
+                  >
+                    <TrendingDown size={14} /> Saída
+                  </button>
+                </div>
+
+                <div className="relative flex-1 group w-full h-[56px]">
+                  <Search size={22} className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-indigo-500 transition-colors" />
+                  <input
+                    type="text"
+                    placeholder="Pesquisar..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full h-full pl-14 pr-6 bg-white border border-slate-200 rounded-full focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all font-bold text-slate-700 placeholder:text-slate-300 shadow-sm"
+                  />
+                </div>
+
+                <div className="relative min-w-[240px] w-full h-[56px]">
+                  <Filter size={20} className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" />
+                  <select
+                    value={filterCategory}
+                    onChange={(e) => setFilterCategory(e.target.value)}
+                    className="w-full h-full pl-14 pr-10 bg-white border border-slate-200 rounded-full focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none appearance-none font-bold text-slate-700 cursor-pointer shadow-sm"
+                  >
+                    <option value="All">Todas Categorias</option>
+                    {categories.map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+                  <div className="absolute right-6 top-1/2 -translate-y-1/2 pointer-events-none text-slate-300">
+                    <ChevronRight size={18} className="rotate-90" />
+                  </div>
+                </div>
+              </div>
+
+              {filteredTransactions.length === 0 ? (
+                <div className="text-center py-20 bg-white rounded-2xl border border-dashed border-slate-300">
+                  <div className="bg-slate-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Calendar className="text-slate-300" size={32} />
+                  </div>
+                  <h4 className="text-slate-900 font-bold text-lg">Sem resultados</h4>
+                  <p className="text-slate-500 text-sm mt-1 max-w-xs mx-auto">
+                    {searchTerm || filterCategory !== 'All'
+                      ? 'Nenhum lançamento corresponde aos filtros aplicados.'
+                      : 'Não há lançamentos para este mês ainda.'}
+                  </p>
+                  {(searchTerm || filterCategory !== 'All') && (
+                    <button
+                      onClick={() => { setSearchTerm(''); setFilterCategory('All'); }}
+                      className="mt-4 text-indigo-600 text-sm font-bold hover:underline"
+                    >
+                      Limpar Filtros
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {filteredTransactions.map((t) => (
+                    <div
+                      key={t.id}
+                      className="group glass-card p-4 rounded-2xl border-none hover:shadow-xl transition-all flex items-center justify-between animate-in fade-in slide-in-from-bottom-2 duration-300"
+                    >
+                      <div className="flex items-center gap-4">
+                        {t.type === 'expense' && (
                           <button
-                            onClick={() => handleOpenEditModal(t)}
-                            className="text-xs text-indigo-500 hover:bg-indigo-50 px-2 py-1 rounded transition-colors flex items-center gap-1"
-                            title="Editar este lançamento"
+                            onClick={() => togglePaid(t)}
+                            className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all shrink-0 ${t.is_paid ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-200 hover:border-emerald-300'}`}
+                            title={t.is_paid ? "Marcar como não pago" : "Marcar como pago"}
                           >
-                            <Pencil size={12} /> Editar
+                            {t.is_paid && <CheckCircle size={14} />}
                           </button>
                         )}
-                        <button
-                          onClick={() => handleDelete(t.id)}
-                          className="text-xs text-rose-500 hover:bg-rose-50 px-2 py-1 rounded transition-colors flex items-center gap-1"
-                          title="Eliminar este lançamento"
-                        >
-                          <Trash2 size={12} /> Apagar
-                        </button>
+                        <div className={`p-3 rounded-xl shrink-0 ${t.type === 'income' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                          {t.type === 'income' ? <TrendingUp size={20} /> : <TrendingDown size={20} />}
+                        </div>
+                        <div className={t.is_paid ? 'opacity-50 transition-opacity' : 'transition-opacity'}>
+                          <div className="flex items-center gap-2">
+                            <p className="font-bold text-slate-900">{t.description}</p>
+                            {t.is_auto_salary && (
+                              <span className="bg-green-100 text-green-700 text-[10px] px-1.5 py-0.5 rounded-full flex items-center gap-1 font-bold border border-green-200">
+                                <CheckCircle size={10} /> AUTO
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 mt-1">
+                            <Badge type={t.type} />
+                            <span className="text-slate-500 font-bold">• {t.category}</span>
+                            <span className={`${!t.is_paid && t.due_date && new Date(t.due_date) < new Date() ? 'text-rose-600 font-black animate-pulse' : 'text-slate-500 font-semibold'}`}>
+                              • {new Date(t.date).toLocaleDateString('pt-BR')}
+                              {!t.is_paid && t.due_date && new Date(t.due_date) < new Date() && ' (VENCIDO!)'}
+                            </span>
+                            {t.installment_current && t.installment_total && (
+                              <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200">
+                                {t.installment_current}/{t.installment_total}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col items-end gap-1">
+                        <span className={`font-black text-xl tabular-nums ${t.type === 'income' ? 'text-emerald-600' : 'text-slate-900'}`}>
+                          {t.type === 'income' ? '+' : '-'}{formatCurrency(t.amount)}
+                        </span>
+                        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                          {!t.is_auto_salary && (
+                            <button
+                              onClick={() => handleOpenEditModal(t)}
+                              className="text-xs text-indigo-500 hover:bg-indigo-50 px-2 py-1 rounded transition-colors flex items-center gap-1"
+                              title="Editar este lançamento"
+                            >
+                              <Pencil size={12} /> Editar
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleDelete(t.id)}
+                            className="text-xs text-rose-500 hover:bg-rose-50 px-2 py-1 rounded transition-colors flex items-center gap-1"
+                            title="Eliminar este lançamento"
+                          >
+                            <Trash2 size={12} /> Apagar
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-        </div>
-
-      </main >
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
+        )}
+      </main>
 
       {/* AI Chat Floating Widget */}
       <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-4">
@@ -1655,7 +1903,7 @@ export default function FinanceApp() {
                   <Bot size={24} className="animate-float" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-sm">Consultor IA rDs</h3>
+                  <h3 className="font-bold text-sm">Consultor rDs</h3>
                   <div className="flex items-center gap-1">
                     <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
                     <span className="text-[10px] text-white/80 font-bold uppercase tracking-widest">Online</span>
@@ -1765,6 +2013,6 @@ export default function FinanceApp() {
           )}
         </button>
       </div>
-    </div >
+    </div>
   );
 }

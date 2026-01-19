@@ -3,23 +3,22 @@
 @tailwind utilities;
 
 :root {
-  /* Modern Luxury Light Theme Palette */
-  --background: 210 40% 98%;
-  /* Soft blue-ish white */
+  /* Modern Luxury Grey Theme Palette */
+  --background: 210 20% 96%;
+  /* slate-100-ish */
   --foreground: 222 47% 11%;
-  /* Deep slate for text */
-  --primary: 221 83% 53%;
-  /* Vibrant Blue */
+  --primary: 142 70% 45%;
+  /* Emerald */
 
-  /* Glassmorphism Variables */
-  --glass-bg: rgba(255, 255, 255, 0.85);
-  --glass-border: rgba(255, 255, 255, 0.5);
-  --glass-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
+  /* Glassmorphism Variables for White Background */
+  --glass-bg: rgba(255, 255, 255, 1);
+  --glass-border: rgba(0, 0, 0, 0.05);
+  --glass-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.1);
 }
 
 @layer base {
   body {
-    @apply bg-slate-50 text-slate-900 antialiased font-sans transition-colors duration-300;
+    @apply bg-slate-100 text-slate-900 antialiased font-sans transition-colors duration-300;
   }
 }
 
@@ -64,11 +63,11 @@
 }
 
 ::-webkit-scrollbar-track {
-  @apply bg-transparent;
+  @apply bg-slate-100;
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-slate-300 rounded-full hover:bg-slate-400 transition-colors border-4 border-transparent bg-clip-content;
+  @apply bg-slate-300 rounded-full hover:bg-slate-400 transition-colors border-4 border-slate-100 bg-clip-content;
 }
 
 /* Animations */
@@ -88,6 +87,24 @@
 
 .animate-float {
   animation: float 4s ease-in-out infinite;
+}
+
+@keyframes slow-zoom {
+  0% {
+    transform: scale(1.0);
+  }
+
+  50% {
+    transform: scale(1.1);
+  }
+
+  100% {
+    transform: scale(1.0);
+  }
+}
+
+.animate-slow-zoom {
+  animation: slow-zoom 20s ease-in-out infinite;
 }
 
 .hover-lift {
