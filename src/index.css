@@ -2,8 +2,94 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  /* Modern Luxury Light Theme Palette */
+  --background: 210 40% 98%;
+  /* Soft blue-ish white */
+  --foreground: 222 47% 11%;
+  /* Deep slate for text */
+  --primary: 221 83% 53%;
+  /* Vibrant Blue */
+
+  /* Glassmorphism Variables */
+  --glass-bg: rgba(255, 255, 255, 0.85);
+  --glass-border: rgba(255, 255, 255, 0.5);
+  --glass-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
+}
+
 @layer base {
   body {
-    @apply bg-slate-50 text-slate-900;
+    @apply bg-slate-50 text-slate-900 antialiased font-sans transition-colors duration-300;
   }
+}
+
+@layer components {
+
+  /* Premium Card Design */
+  .glass-card {
+    background: var(--glass-bg);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
+    @apply rounded-3xl transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl;
+  }
+
+  /* Vibrant Gradients for "Wow" Factor */
+  .premium-gradient-green {
+    @apply bg-gradient-to-br from-emerald-400 via-emerald-500 to-teal-600 shadow-lg shadow-emerald-200;
+  }
+
+  .premium-gradient-blue {
+    @apply bg-gradient-to-br from-blue-500 via-indigo-500 to-violet-600 shadow-lg shadow-indigo-200;
+  }
+
+  .premium-gradient-rose {
+    @apply bg-gradient-to-br from-rose-400 via-rose-500 to-pink-600 shadow-lg shadow-rose-200;
+  }
+
+  .premium-gradient-violet {
+    @apply bg-gradient-to-br from-violet-400 via-violet-500 to-purple-600 shadow-lg shadow-violet-200;
+  }
+
+  /* Clean Inputs */
+  .premium-input {
+    @apply bg-white border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 transition-all outline-none shadow-sm;
+  }
+}
+
+/* Scrollbar Customization */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-300 rounded-full hover:bg-slate-400 transition-colors border-4 border-transparent bg-clip-content;
+}
+
+/* Animations */
+@keyframes float {
+  0% {
+    transform: translateY(0px);
+  }
+
+  50% {
+    transform: translateY(-8px);
+  }
+
+  100% {
+    transform: translateY(0px);
+  }
+}
+
+.animate-float {
+  animation: float 4s ease-in-out infinite;
+}
+
+.hover-lift {
+  @apply transition-transform duration-300 hover:-translate-y-1;
 }

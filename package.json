@@ -1,5 +1,5 @@
 {
-  "name": "finance-app",
+  "name": "financas-rds",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -16,6 +16,7 @@
     "postcss": "^8.5.6",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "recharts": "^3.6.0",
     "tailwindcss": "^3.4.19"
   },
   "devDependencies": {
